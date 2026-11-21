@@ -1,0 +1,239 @@
+#include <Servo.h>
+
+// ---------------- PINS ----------------
+const int LEFT_EYE_PIN   = 10;
+const int RIGHT_EYE_PIN  = 13;
+const int LEFT_LID_PIN   = 11;
+const int RIGHT_LID_PIN  = 12;
+
+// ---------------- CALIBRATION ----------------
+const int EYE_CENTER = 85;
+const int EYE_MIN    = 60;    // furthest one way
+const int EYE_MAX    = 110;   // furthest the other way
+
+// Lids (from your updated blink: left open 95 / closed 160, right open 110 / closed 60)
+const int LID_L_OPEN = 95,  LID_L_CLOSED = 160;
+const int LID_R_OPEN = 110, LID_R_CLOSED = 60;
+
+// If cross-eyed looks "wall-eyed" instead, flip this to -1
+const int CROSS_DIR = 1;
+
+// ---------------- SERVOS ----------------
+Servo leftEye, rightEye, leftLid, rightLid;
+
+int eyeL = EYE_CENTER;
+int eyeR = EYE_CENTER;
+
+bool idleMode = true;
+unsigned long nextBlinkAt = 0;
+
+// ---------------- LOW-LEVEL HELPERS ----------------
+
+void setEyes(int l, int r) {
+  eyeL = constrain(l, EYE_MIN, EYE_MAX);
+  eyeR = constrain(r, EYE_MIN, EYE_MAX);
+  leftEye.write(eyeL);
+  rightEye.write(eyeR);
+}
+
+// 0 = fully open, 100 = fully closed
+void setLeftLid(int pct)  { leftLid.write(map(pct, 0, 100, LID_L_OPEN, LID_L_CLOSED)); }
+void setRightLid(int pct) { rightLid.write(map(pct, 0, 100, LID_R_OPEN, LID_R_CLOSED)); }
+void setLids(int pct)     { setLeftLid(pct); setRightLid(pct); }
+
+void scheduleBlink() { nextBlinkAt = millis() + random(2000, 6000); }
+
+// ---------------- MOVEMENT ----------------
+
+// Smoothly move both eyes (together) to a target angle
+void moveEyesTo(int target, int stepDelay) {
+  target = constrain(target, EYE_MIN, EYE_MAX);
+  while (eyeL != target || eyeR != target) {
+    int l = eyeL + (target > eyeL) - (target < eyeL);
+    int r = eyeR + (target > eyeR) - (target < eyeR);
+    setEyes(l, r);
+    delay(stepDelay);
+  }
+}
+
+// Fast jump, like a real eye saccade
+void dart(int target) {
+  setEyes(target, target);
+}
+
+// ---------------- EXPRESSIONS ----------------
+
+// Natural, quick blink
+// Tuning: raise BLINK_STEP_MS if the lids still look out of sync
+const int BLINK_STEP_MS = 14;   // time per 10% step
+const int BLINK_HOLD_MS = 90;   // time held closed
+
+void blink() {
+  for (int p = 0; p <= 100; p += 10) { setLids(p); delay(BLINK_STEP_MS); }
+  delay(BLINK_HOLD_MS);
+  for (int p = 100; p >= 0; p -= 10) { setLids(p); delay(BLINK_STEP_MS); }
+}
+
+void doubleBlink() {
+  blink();
+  delay(120);
+  blink();
+}
+
+void winkLeft() {
+  for (int p = 0; p <= 100; p += 20) { setLeftLid(p); delay(10); }
+  delay(400);
+  for (int p = 100; p >= 0; p -= 20) { setLeftLid(p); delay(10); }
+}
+
+void winkRight() {
+  for (int p = 0; p <= 100; p += 20) { setRightLid(p); delay(10); }
+  delay(400);
+  for (int p = 100; p >= 0; p -= 20) { setRightLid(p); delay(10); }
+}
+
+// Slow droop, then jolt awake
+void sleepy() {
+  moveEyesTo(EYE_CENTER, 10);
+  for (int p = 0; p <= 85; p++) { setLids(p); delay(25); }
+  delay(600);
+  for (int p = 85; p >= 40; p--) { setLids(p); delay(10); }   // half-wake
+  delay(300);
+  for (int p = 40; p <= 90; p++) { setLids(p); delay(8); }    // droop again
+  delay(500);
+  setLids(0);                                                 // snap awake
+  delay(250);
+  doubleBlink();
+}
+
+// Startled: squint, then snap wide and dart around
+void surprised() {
+  setLids(45);
+  delay(200);
+  setLids(0);
+  dart(EYE_MIN + 5);
+  delay(250);
+  dart(EYE_MAX - 5);
+  delay(250);
+  dart(EYE_CENTER);
+  delay(300);
+  blink();
+}
+
+// Eyes converge, hold, relax
+void crossEyes() {
+  moveEyesTo(EYE_CENTER, 5);
+  for (int i = 0; i <= 15; i++) {
+    setEyes(EYE_CENTER + i * CROSS_DIR, EYE_CENTER - i * CROSS_DIR);
+    delay(30);
+  }
+  delay(1200);
+  for (int i = 15; i >= 0; i--) {
+    setEyes(EYE_CENTER + i * CROSS_DIR, EYE_CENTER - i * CROSS_DIR);
+    delay(30);
+  }
+}
+
+// Slow sweep across the full range (your original lookleft/lookright, but tidier)
+void scan() {
+  moveEyesTo(EYE_MAX, 40);
+  moveEyesTo(EYE_MIN, 40);
+  moveEyesTo(EYE_CENTER, 30);
+}
+
+// "No" shake: quick small left-right
+void shakeNo() {
+  for (int i = 0; i < 3; i++) {
+    moveEyesTo(EYE_CENTER + 15, 4);
+    moveEyesTo(EYE_CENTER - 15, 4);
+  }
+  moveEyesTo(EYE_CENTER, 4);
+}
+
+// Suspicious squint while looking to one side
+void suspicious() {
+  moveEyesTo(EYE_MAX - 5, 15);
+  for (int p = 0; p <= 55; p++) { setLids(p); delay(10); }
+  delay(1500);
+  for (int p = 55; p >= 0; p--) { setLids(p); delay(10); }
+  moveEyesTo(EYE_CENTER, 15);
+}
+
+// ---------------- IDLE (LIFE-LIKE) ----------------
+
+// Delay that still blinks on schedule
+void wait(unsigned long ms) {
+  unsigned long end = millis() + ms;
+  while (millis() < end) {
+    if (millis() >= nextBlinkAt) {
+      blink();
+      scheduleBlink();
+    }
+    delay(5);
+  }
+}
+
+void idleStep() {
+  int roll = random(100);
+  int target = random(EYE_MIN + 5, EYE_MAX - 5);
+
+  if (roll < 60) {
+    dart(target);                         // quick glance
+  } else if (roll < 90) {
+    moveEyesTo(target, random(8, 25));    // slow drift
+  } else if (roll < 95) {
+    doubleBlink();
+  } else {
+    moveEyesTo(EYE_CENTER, 10);           // look back at the viewer
+  }
+  wait(random(500, 2500));
+}
+
+// ---------------- SERIAL CONTROL ----------------
+// b blink | d double blink | l wink left | r wink right | s sleepy
+// u surprised | c cross-eyed | x scan | n shake no | q suspicious | i toggle idle
+
+void handleSerial() {
+  if (!Serial.available()) return;
+  char c = Serial.read();
+  switch (c) {
+    case 'b': blink();        break;
+    case 'd': doubleBlink();  break;
+    case 'l': winkLeft();     break;
+    case 'r': winkRight();    break;
+    case 's': sleepy();       break;
+    case 'u': surprised();    break;
+    case 'c': crossEyes();    break;
+    case 'x': scan();         break;
+    case 'n': shakeNo();      break;
+    case 'q': suspicious();   break;
+    case 'i':
+      idleMode = !idleMode;
+      Serial.println(idleMode ? "idle ON" : "idle OFF");
+      break;
+  }
+}
+
+// ---------------- SETUP / LOOP ----------------
+
+void setup() {
+  Serial.begin(9600);
+  randomSeed(analogRead(A0));
+
+  leftEye.attach(LEFT_EYE_PIN);
+  rightEye.attach(RIGHT_EYE_PIN);
+  leftLid.attach(LEFT_LID_PIN);
+  rightLid.attach(RIGHT_LID_PIN);
+
+  setEyes(EYE_CENTER, EYE_CENTER);
+  setLids(0);
+  delay(500);
+
+  scheduleBlink();
+  Serial.println("Ready: b d l r s u c x n q i");
+}
+
+void loop() {
+  handleSerial();
+  if (idleMode) idleStep();
+}
